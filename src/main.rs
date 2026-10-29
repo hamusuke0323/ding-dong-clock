@@ -1,0 +1,219 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use chrono::{Local, Timelike};
+use rodio::{Decoder, DeviceSinkBuilder, Player};
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
+    sync::mpsc::{self, SyncSender},
+    thread,
+    time::{Duration, Instant},
+};
+use tray_icon::{
+    Icon, TrayIconBuilder,
+    menu::{CheckMenuItem, Menu, MenuEvent, MenuItem},
+};
+use winit::{
+    event::Event,
+    event_loop::{ControlFlow, EventLoop},
+};
+
+// 音声ファイルの場所
+fn bell_file_path() -> PathBuf {
+    let exe = std::env::current_exe().expect("実行ファイルの場所を取得できません");
+
+    let dir = exe.parent().unwrap_or(Path::new("."));
+
+    let wav = dir.join("bell.wav");
+    if wav.exists() {
+        return wav;
+    }
+
+    dir.join("bell.mp3")
+}
+
+// 指定回数だけ録音音声を再生
+
+fn play_bell(path: &Path, count: u32) -> Result<(), String> {
+    // Windowsの既定の音声出力デバイスを開く
+    let device_sink = DeviceSinkBuilder::open_default_sink().map_err(|e| e.to_string())?;
+
+    // 音声プレイヤーを作成
+    let player = Player::connect_new(device_sink.mixer());
+
+    for i in 0..count {
+        // 録音した鐘の音を読み込む
+        let file = File::open(path).map_err(|e| e.to_string())?;
+
+        let source = Decoder::try_from(file).map_err(|e| e.to_string())?;
+
+        // 再生
+        player.append(source);
+
+        // 鐘の余韻が終わるまで待つ
+        //player.sleep_until_end();
+
+        // 最後の鐘以外は0.5秒待機
+        //if i + 1 < count {
+        thread::sleep(Duration::from_millis(1500));
+        //}
+
+        player.stop();
+    }
+
+    Ok(())
+}
+
+// 時報再生専用スレッド
+fn start_audio_worker() -> SyncSender<u32> {
+    let (tx, rx) = mpsc::sync_channel::<u32>(0);
+
+    thread::spawn(move || {
+        let path = bell_file_path();
+
+        while let Ok(count) = rx.recv() {
+            if let Err(e) = play_bell(&path, count) {
+                eprintln!("鐘の再生に失敗: {e}");
+            }
+        }
+    });
+
+    tx
+}
+
+// 12時間制の鐘の回数
+fn hour_count(hour: u32) -> u32 {
+    match hour % 12 {
+        0 => 12,
+        n => n,
+    }
+}
+
+// トレイ用の仮アイコン
+fn create_icon() -> Icon {
+    let mut rgba = Vec::new();
+
+    for y in 0i32..16 {
+        for x in 0i32..16 {
+            let dx = x - 8;
+            let dy = y - 8;
+
+            if dx * dx + dy * dy <= 49 {
+                rgba.extend_from_slice(&[210, 160, 55, 255]);
+            } else {
+                rgba.extend_from_slice(&[0, 0, 0, 0]);
+            }
+        }
+    }
+
+    Icon::from_rgba(rgba, 16, 16).unwrap()
+}
+
+fn main() {
+    let event_loop = EventLoop::new().unwrap();
+
+    let menu = Menu::new();
+
+    let enabled = CheckMenuItem::new("時報を鳴らす", true, true, None);
+
+    let test = MenuItem::new("試し鳴らし", true, None);
+
+    let quit = MenuItem::new("終了", true, None);
+
+    menu.append(&enabled).unwrap();
+    menu.append(&test).unwrap();
+    menu.append(&quit).unwrap();
+
+    let _tray = TrayIconBuilder::new()
+        .with_menu(Box::new(menu))
+        .with_tooltip("ボンボン時計")
+        .with_icon(create_icon())
+        .build()
+        .unwrap();
+
+    let audio_tx = start_audio_worker();
+
+    let mut last_chime: Option<String> = None;
+
+    event_loop
+        .run(move |event, elwt| {
+            elwt.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(100),
+            ));
+
+            if let Event::NewEvents(_) = event {
+                // タスクトレイの操作
+                while let Ok(ev) = MenuEvent::receiver().try_recv() {
+                    if ev.id == test.id() {
+                        // 再生中なら新しい要求を破棄
+                        let _ = audio_tx.try_send(1);
+                    }
+
+                    if ev.id == quit.id() {
+                        elwt.exit();
+                        return;
+                    }
+                }
+
+                if !enabled.is_checked() {
+                    return;
+                }
+
+                let now = Local::now();
+                if now.minute() != 0 || now.second() >= 2 {
+                    return;
+                }
+
+                // 毎正時の最初の数秒間だけ判定
+                let key = now.format("%Y-%m-%d %H").to_string();
+
+                if last_chime.as_ref() != Some(&key) {
+                    last_chime = Some(key);
+
+                    let count = hour_count(now.hour());
+                    let _ = audio_tx.try_send(count);
+                }
+            }
+        })
+        .unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Local, Timelike};
+
+    #[test]
+    fn hourly_chimes() {
+        assert_eq!(hour_count(0), 12);
+        assert_eq!(hour_count(1), 1);
+        assert_eq!(hour_count(12), 12);
+        assert_eq!(hour_count(13), 1);
+        assert_eq!(hour_count(23), 11);
+    }
+
+    // 現在時刻に合わせて鐘を鳴らす
+    #[test]
+    #[ignore = "実際に音声を再生するため手動実行"]
+    fn test_play_bell_now() {
+        // 現在時刻を取得
+        let now = Local::now();
+        let hour = now.hour();
+
+        // 鳴らす回数を計算
+        let count = hour_count(hour);
+
+        println!("現在時刻: {}", now.format("%Y-%m-%d %H:%M:%S"));
+        println!("鐘を {} 回鳴らします", count);
+
+        // 音声ファイルのパスを取得
+        let path = bell_file_path();
+
+        assert!(path.exists(), "鐘の音声ファイルがありません: {:?}", path);
+
+        // 鐘を再生
+        play_bell(&path, count).expect("鐘の再生に失敗しました");
+
+        println!("再生テスト完了");
+    }
+}
