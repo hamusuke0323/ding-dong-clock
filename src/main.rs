@@ -37,7 +37,7 @@ fn main() {
     let event_loop = EventLoop::new().unwrap();
 
     let tray = tray::Tray::new(&initial_config);
-    let audio_tx = audio::start_worker(Arc::clone(&config));
+    let audio = audio::AudioManager::new(Arc::clone(&config));
     let mut clock = Clock::new();
 
     event_loop
@@ -48,7 +48,7 @@ fn main() {
 
             if let Event::NewEvents(_) = event {
                 // メニュー操作
-                if tray.handle_events(&config, &audio_tx) {
+                if tray.handle_events(&config, &audio) {
                     elwt.exit();
                     return;
                 }
@@ -58,7 +58,7 @@ fn main() {
                     let enabled = config.lock().unwrap().enabled;
 
                     if enabled {
-                        let _ = audio_tx.try_send(count);
+                        let _ = audio.hourly(count);
                     }
                 }
             }

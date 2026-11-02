@@ -105,9 +105,9 @@ mod tests {
         let config = AppConfig::default();
 
         assert!(config.enabled);
-        assert_eq!(config.volume, 0.8);
-        assert_eq!(config.bell_interval_ms, 500);
-        assert_eq!(config.sound_file, "bell.wav");
+        assert_eq!(config.volume, 1.0);
+        assert_eq!(config.bell_interval_ms, 1500);
+        assert_eq!(config.sound_file, "bell.mp3");
     }
 
     #[test]
@@ -131,7 +131,7 @@ mod tests {
         let config: AppConfig = serde_json::from_str(json).unwrap();
 
         assert!(!config.enabled);
-        assert_eq!(config.volume, 0.8);
-        assert_eq!(config.bell_interval_ms, 500);
+        assert_eq!(config.volume, 1.0);
+        assert_eq!(config.bell_interval_ms, 1500);
     }
 }

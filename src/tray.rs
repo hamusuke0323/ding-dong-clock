@@ -1,6 +1,6 @@
 use crate::config::AppConfig;
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Sender, SyncSender};
+use std::sync::{Arc, Mutex};
 use tray_icon::{
     Icon, TrayIcon, TrayIconBuilder,
     menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, Submenu},
@@ -104,7 +104,7 @@ impl Tray {
     pub fn handle_events(
         &self,
         config: &Arc<Mutex<AppConfig>>,
-        audio_tx: &SyncSender<u32>,
+        audio: &crate::audio::AudioManager,
     ) -> bool {
         while let Ok(ev) = MenuEvent::receiver().try_recv() {
             if ev.id == self.quit.id() {
@@ -112,7 +112,7 @@ impl Tray {
             }
 
             if ev.id == self.test.id() {
-                let _ = audio_tx.try_send(1);
+                let _ = audio.test(1);
                 continue;
             }
 
@@ -152,10 +152,22 @@ impl Tray {
                     .add_filter("音声ファイル", &["wav", "mp3"])
                     .pick_file()
                 {
-                    let mut cfg = config.lock().unwrap();
-                    cfg.sound_file = path.to_string_lossy().into_owned();
-                    save(&cfg);
+                    let path_string = path.to_string_lossy().into_owned();
+
+                    {
+                        let mut current = config.lock().unwrap();
+                        current.sound_file = path_string.clone();
+
+                        if let Err(e) = current.save() {
+                            eprintln!("設定保存エラー: {e}");
+                        }
+                    }
+
+                    // バックグラウンドで新しい音声を読み込む
+                    audio.reload_sound(&path_string);
                 }
+
+                continue;
             }
         }
 
