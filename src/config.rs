@@ -23,13 +23,31 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    // Windowsの設定ファイル保存先
     pub fn config_path() -> io::Result<PathBuf> {
-        let dirs = BaseDirs::new().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "設定フォルダを取得できません")
-        })?;
+        let dirs = directories::BaseDirs::new()
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "設定フォルダを取得できません",
+                )
+            })?;
 
-        Ok(dirs.config_dir().join("BonbonClock").join("config.json"))
+        #[cfg(target_os = "windows")]
+        let path = dirs.config_dir()
+            .join("BonbonClock")
+            .join("config.json");
+
+        #[cfg(target_os = "macos")]
+        let path = dirs.data_dir()
+            .join("BonbonClock")
+            .join("config.json");
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        let path = dirs.config_dir()
+            .join("BonbonClock")
+            .join("config.json");
+
+        Ok(path)
     }
 
     // 設定を読み込む
