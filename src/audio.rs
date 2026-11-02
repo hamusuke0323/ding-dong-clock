@@ -15,7 +15,6 @@ use std::{
 type CachedSound = rodio::source::Buffered<rodio::buffer::SamplesBuffer>;
 
 struct SoundCache {
-    path: PathBuf,
     sound: CachedSound,
 }
 
@@ -31,7 +30,7 @@ impl SoundCache {
         // clone可能な音声ソースにする
         let sound = samples.buffered();
 
-        Ok(Self { path, sound })
+        Ok(Self { sound })
     }
 }
 
@@ -67,9 +66,7 @@ impl SoundStore {
 
     // 再生側は短時間のロックだけで取得できる
     fn current_sound(&self) -> Option<CachedSound> {
-        self.state.lock().unwrap()
-            .current
-            .clone()
+        self.state.lock().unwrap().current.clone()
     }
 
     // 音声読み込みを別スレッドで開始
@@ -77,8 +74,7 @@ impl SoundStore {
         let generation = {
             let mut state = self.state.lock().unwrap();
 
-            state.generation =
-                state.generation.wrapping_add(1);
+            state.generation = state.generation.wrapping_add(1);
 
             state.requested_path = Some(path.clone());
             state.generation
@@ -110,9 +106,7 @@ impl SoundStore {
                     // すでに別のファイルが選ばれていたら
                     // 古い要求のエラーは無視する
                     if state.generation == generation {
-                        eprintln!(
-                            "音声の先読みエラー: {e}"
-                        );
+                        eprintln!("音声の先読みエラー: {e}");
                     }
                 }
             }
@@ -247,14 +241,13 @@ impl AudioManager {
         let worker_sounds = Arc::clone(&sounds);
 
         thread::spawn(move || {
-            let device =
-                match DeviceSinkBuilder::open_default_sink() {
-                    Ok(device) => device,
-                    Err(e) => {
-                        eprintln!("音声出力エラー: {e}");
-                        return;
-                    }
-                };
+            let device = match DeviceSinkBuilder::open_default_sink() {
+                Ok(device) => device,
+                Err(e) => {
+                    eprintln!("音声出力エラー: {e}");
+                    return;
+                }
+            };
 
             let mixer = device.mixer().clone();
 
@@ -263,10 +256,8 @@ impl AudioManager {
 
                 match command {
                     Command::Hourly(count) => {
-                        let shared =
-                            Arc::clone(&worker_shared);
-                        let sounds =
-                            Arc::clone(&worker_sounds);
+                        let shared = Arc::clone(&worker_shared);
+                        let sounds = Arc::clone(&worker_sounds);
                         let mixer = mixer.clone();
 
                         thread::spawn(move || {
@@ -276,12 +267,8 @@ impl AudioManager {
 
                             shared.wait_for_tests();
 
-                            let Some(sound) =
-                                sounds.current_sound()
-                            else {
-                                eprintln!(
-                                    "時報: 音声の先読みが未完了です"
-                                );
+                            let Some(sound) = sounds.current_sound() else {
+                                eprintln!("時報: 音声の先読みが未完了です");
                                 return;
                             };
 
@@ -295,28 +282,18 @@ impl AudioManager {
                         });
                     }
 
-                    Command::Test {
-                        count,
-                        generation,
-                    } => {
-                        if !worker_shared
-                            .test_allowed(generation)
-                        {
+                    Command::Test { count, generation } => {
+                        if !worker_shared.test_allowed(generation) {
                             continue;
                         }
 
-                        let Some(sound) =
-                            worker_sounds.current_sound()
-                        else {
-                            eprintln!(
-                                "テスト: 音声の先読みが未完了です"
-                            );
+                        let Some(sound) = worker_sounds.current_sound() else {
+                            eprintln!("テスト: 音声の先読みが未完了です");
                             continue;
                         };
 
                         let mixer = mixer.clone();
-                        let shared =
-                            Arc::clone(&worker_shared);
+                        let shared = Arc::clone(&worker_shared);
 
                         thread::spawn(move || {
                             play_test(
@@ -336,11 +313,7 @@ impl AudioManager {
             drop(device);
         });
 
-        Self {
-            tx,
-            shared,
-            sounds,
-        }
+        Self { tx, shared, sounds }
     }
 
     // 設定変更時に呼び出す
@@ -580,12 +553,9 @@ mod tests {
 
         sounds.preload(sound_path("bell.mp3"));
 
-        let deadline =
-            Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(5);
 
-        while sounds.current_sound().is_none()
-            && Instant::now() < deadline
-        {
+        while sounds.current_sound().is_none() && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(10));
         }
 
